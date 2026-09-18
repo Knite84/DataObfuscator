@@ -2,8 +2,9 @@ const editor = document.getElementById("editor");
 const analyzeBtn = document.getElementById("analyze-btn");
 const clearBtn = document.getElementById("clear-btn");
 const resultsPanel = document.getElementById("results-panel");
-const findingsBody = document.getElementById("findings-body");
 const mappingBody = document.getElementById("mapping-body");
+const approveRemainingBtn = document.getElementById("approve-remaining-btn");
+const rejectRemainingBtn = document.getElementById("reject-remaining-btn");
 const warningsEl = document.getElementById("warnings");
 const unverifiedHeading = document.getElementById("unverified-heading");
 const unverifiedTable = document.getElementById("unverified-table");
@@ -73,9 +74,9 @@ async function analyze() {
       replacementValue: f.replacement ?? "",
     }));
     manualAdds = [];
-    expandedGroups = new Set();
     manualQuoteEl.value = "";
     manualCategoryEl.value = "free_text";
+    expandedGroups = new Set();
     renderResults(result);
     resultsPanel.scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (err) {
@@ -132,26 +133,6 @@ function groupStatus(group) {
 }
 
 function renderResults(result) {
-  findingsBody.innerHTML = "";
-  items.forEach((f, i) => {
-    const tr = document.createElement("tr");
-    if (f.status === "pending") tr.className = "needs-review";
-    if (f.status === "rejected") tr.className = "rejected";
-    tr.innerHTML = `
-      <td>${i + 1}</td>
-      <td>${escapeHtml(f.quote)}</td>
-      <td class="cat">${escapeHtml(f.category)}</td>
-      <td><input class="repl" data-idx="${i}" value="${escapeHtml(f.replacementValue)}" ${f.status === "rejected" ? "disabled" : ""} /></td>
-      <td>${escapeHtml(f.source)}</td>
-      <td class="conf ${f.confidence < AUTO_APPROVE_CONF ? "low" : ""}">${f.confidence.toFixed(2)}</td>
-      <td>${f.resolution}</td>
-      <td>${escapeHtml(f.status)}</td>
-      <td>
-        <button data-act="approve" data-idx="${i}" class="mini">Approve</button>
-        <button data-act="reject" data-idx="${i}" class="mini">Reject</button>
-      </td>`;
-    findingsBody.appendChild(tr);
-  });
   mappingBody.innerHTML = "";
   const groups = buildGroups();
   groups.forEach((g, gi) => {
@@ -178,16 +159,24 @@ function renderResults(result) {
       dtr.className = "group-detail";
       const membersHtml = g.members.map((i) => {
         const f = items[i];
-        return `<div class="member">
-          <span>#${i + 1}</span>
-          <span class="meta">conf ${f.confidence.toFixed(2)} · ${escapeHtml(f.source)} · ${escapeHtml(f.status)}</span>
-          <span>
+        const rowCls = f.status === "rejected" ? "rejected" : f.status === "pending" ? "needs-review" : "";
+        return `<tr class="${rowCls}">
+          <td>#${i + 1}</td>
+          <td>${escapeHtml(f.source)}</td>
+          <td class="conf ${f.confidence < AUTO_APPROVE_CONF ? "low" : ""}">${f.confidence.toFixed(2)}</td>
+          <td>${f.resolution}</td>
+          <td><input class="repl" data-idx="${i}" value="${escapeHtml(f.replacementValue)}" ${f.status === "rejected" ? "disabled" : ""} /></td>
+          <td>${escapeHtml(f.status)}</td>
+          <td>
             <button data-act="approve" data-idx="${i}" class="mini">Approve</button>
             <button data-act="reject" data-idx="${i}" class="mini">Reject</button>
-          </span>
-        </div>`;
-      }).join("") + g.manualMembers.map(() => `<div class="member"><span class="meta">manual entry — edit in Findings table</span></div>`).join("");
-      dtr.innerHTML = `<td></td><td colspan="6"><div class="group-members">${membersHtml || '<div class="member"><span class="meta">no members</span></div>'}</div></td>`;
+          </td>
+        </tr>`;
+      }).join("") + g.manualMembers.map(() => `<tr><td colspan="7"><span class="meta">manual entry — uses the group replacement on finalize</span></td></tr>`).join("");
+      dtr.innerHTML = `<td></td><td colspan="6"><table class="findings members">
+        <thead><tr><th>#</th><th>Source</th><th>Conf</th><th>Resolves?</th><th>Replacement</th><th>Decision</th><th>Actions</th></tr></thead>
+        <tbody>${membersHtml || '<tr><td colspan="7"><span class="meta">no members</span></td></tr>'}</tbody>
+      </table></td>`;
       mappingBody.appendChild(dtr);
     }
   });
@@ -221,12 +210,6 @@ function applyItemAction(idx, act) {
 }
 
 function bindActions() {
-  findingsBody.addEventListener("click", (event) => {
-    const button = event.target.closest("button[data-act]");
-    if (!button) return;
-    applyItemAction(Number(button.dataset.idx), button.dataset.act);
-    refreshTable();
-  });
   mappingBody.addEventListener("click", (event) => {
     const bulk = event.target.closest("button[data-mact]");
     if (bulk) {
@@ -249,7 +232,7 @@ function bindActions() {
     applyItemAction(Number(button.dataset.idx), button.dataset.act);
     refreshTable();
   });
-  findingsBody.addEventListener("change", (event) => {
+  mappingBody.addEventListener("change", (event) => {
     if (event.target.classList.contains("repl")) {
       const idx = Number(event.target.dataset.idx);
       if (event.target.value !== items[idx].replacementValue) {
@@ -371,6 +354,14 @@ clearBtn.addEventListener("click", () => {
 analyzeBtn.addEventListener("click", analyze);
 finalizeBtn.addEventListener("click", finalize);
 manualAddBtn.addEventListener("click", addManual);
+approveRemainingBtn.addEventListener("click", () => {
+  items.forEach((f) => { if (f.status === "pending") f.status = "approved"; });
+  refreshTable();
+});
+rejectRemainingBtn.addEventListener("click", () => {
+  items.forEach((f) => { if (f.status === "pending") f.status = "rejected"; });
+  refreshTable();
+});
 copyTxtBtn.addEventListener("click", () => navigator.clipboard.writeText(copyTxtBtn.dataset.txt || ""));
 copyHtmlBtn.addEventListener("click", () => navigator.clipboard.writeText(copyHtmlBtn.dataset.html || ""));
 bindActions();

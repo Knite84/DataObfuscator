@@ -22,21 +22,16 @@
     </section>
     <section class="panel" id="results-panel" hidden>
       <h2>Mapping table</h2>
-      <p class="hint">Bulk review: approve or reject a whole group here, or expand a row for per-finding review. Edits stay in the Findings table below.</p>
+      <p class="hint">Bulk review: approve or reject a whole group here, or expand a row for per-finding review and edits.</p>
+      <div class="table-actions">
+        <button id="approve-remaining-btn" class="secondary">Approve remaining</button>
+        <button id="reject-remaining-btn" class="secondary">Reject remaining</button>
+      </div>
       <table class="findings">
         <thead>
           <tr><th></th><th>Quote</th><th>Category</th><th>Replacement</th><th>Count</th><th>Status</th><th>Actions</th></tr>
         </thead>
         <tbody id="mapping-body"></tbody>
-      </table>
-      <h2>Findings</h2>
-      <table class="findings">
-        <thead>
-          <tr>
-            <th>#</th><th>Quote</th><th>Category</th><th>Replacement</th><th>Source</th><th>Confidence</th><th>Resolves?</th><th>Decision</th><th>Actions</th>
-          </tr>
-        </thead>
-        <tbody id="findings-body"></tbody>
       </table>
       <p id="warnings" class="warnings"></p>
       <h2 id="unverified-heading" hidden>Pass 2 — not resolvable to exact text</h2>

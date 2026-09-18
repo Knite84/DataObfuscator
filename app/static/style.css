@@ -94,11 +94,11 @@ table.findings td.cat { font-weight: 600; }
 table.findings td.conf.low { color: var(--warn); }
 table.findings tr.needs-review td { background: #fdf6e3; }
 table.findings tr.rejected td { color: #9a9a9a; text-decoration: line-through; }
-table.findings tr.group-detail td { background: #faf9f7; padding: 0; }
-.group-members { padding: 6px 8px 8px 28px; font-size: 12px; }
-.group-members .member { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; border-top: 1px dotted var(--line); }
-.group-members .member:first-child { border-top: none; }
-.group-members .member .meta { color: var(--ink-soft); }
+table.findings tr.group-detail td { background: #faf9f7; padding: 6px 6px 6px 34px; }
+table.findings table.members { width: 100%; border-collapse: collapse; font-size: 12px; background: #fff; }
+table.findings table.members th, table.findings table.members td { border: 1px solid var(--line); padding: 4px 6px; text-align: left; }
+table.findings table.members th { background: #f2f0ed; }
+.meta { color: var(--ink-soft); font-size: 12px; }
 button.mini.toggle { min-width: 26px; }
 
 input.repl, .manual-add input {
@@ -133,6 +133,8 @@ button.mini {
 }
 
 .hint { font-size: 12px; color: var(--ink-soft); }
+
+.table-actions { display: flex; justify-content: flex-end; gap: 8px; margin: 0 0 8px; }
 
 .warnings { color: var(--warn); font-size: 13px; }
 
