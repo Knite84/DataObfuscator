@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Background -->
+  <rect width="64" height="64" rx="10" fill="#F7F7F5"></rect>
+
+  <!-- Solid shield -->
+  <path fill="#18212B" d="M32 5
+       L55 13
+       V29
+       C55 43 46 54 32 60
+       C18 54 9 43 9 29
+       V13
+       Z"></path>
+
+  <!-- Diagonal breakup: background-colored notch -->
+  <path fill="#F7F7F5" d="M57 20
+       L23 54
+       L29 58
+       L61 25
+       Z"></path>
+
+  <!-- Pixels breaking away from the shield -->
+
+  <!-- Larger pixels -->
+  <rect x="50" y="17" width="4" height="4" fill="#18212B"></rect>
+  <rect x="46" y="23" width="4" height="4" fill="#18212B"></rect>
+  <rect x="42" y="29" width="4" height="4" fill="#18212B"></rect>
+  <rect x="38" y="35" width="4" height="4" fill="#18212B"></rect>
+  <rect x="34" y="41" width="4" height="4" fill="#18212B"></rect>
+
+  <!-- Smaller fragments -->
+  <rect x="55" y="24" width="2" height="2" fill="#18212B"></rect>
+  <rect x="50" y="30" width="3" height="3" fill="#18212B"></rect>
+  <rect x="46" y="36" width="2" height="2" fill="#18212B"></rect>
+  <rect x="41" y="42" width="3" height="3" fill="#18212B"></rect>
+  <rect x="37" y="48" width="2" height="2" fill="#18212B"></rect>
+
+  <!-- A few scattered "noise" pixels -->
+  <rect x="53" y="28" width="1.5" height="1.5" fill="#18212B"></rect>
+  <rect x="48" y="34" width="1.5" height="1.5" fill="#18212B"></rect>
+  <rect x="43" y="40" width="1.5" height="1.5" fill="#18212B"></rect>
+  <rect x="39" y="47" width="1.5" height="1.5" fill="#18212B"></rect>
+  <rect x="34" y="52" width="1.5" height="1.5" fill="#18212B"></rect>
+</svg>
