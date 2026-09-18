@@ -53,3 +53,27 @@ On two occasions, a failing test revealed the production code was right and the 
 ## 11. Surface resolvability, don't hide it
 
 Making "Resolves?" a UI column and returning `unresolved_render_edits` alongside every render keeps silent failures out of the pipeline. A tool whose whole job is replacing text exactly where it was found must never quietly drop an edit — those need to become human review items (step 5), not disappearing failures.
+
+## 12. Every `getElementById` is a contract with the HTML — enforce it
+
+End-to-end testing caught three `null` derefs in a row (`html-preview`, `mapping-body`, then the removed Findings `findings-body`): `app.js` referenced IDs that `index.html` didn't define. The browser throws `Cannot read/set properties of null`, and each fix just exposed the next one. Lesson: after any static-UI change, check that every `getElementById` in `app.js` resolves to an `id=` in `index.html` — a one-line audit that would have caught all three at once.
+
+## 13. A `try/catch` around render can hide the real failure by one click
+
+`analyze()` wraps fetch + `renderResults()` in `try/catch`, so the first missing-element throw was swallowed into an `Analysis failed: ...` banner while the findings rows (appended before the throw) still showed — looking like success. The very next click (`refreshTable()` → `renderResults()` with no `try/catch`) surfaced the same bug as an uncaught error. When a render step can throw *after* partially mutating the DOM, the catch path misleads. Keep render side-effect-free until validated, or don't catch render errors as analysis errors.
+
+## 14. Removed UI must die in the JS too, not just the HTML
+
+The `html-preview` iframe was superseded by the final-output panel, but only the HTML was dropped — `app.js` kept reading/writing `srcdoc`, and `refreshTable()` even tried to *preserve* it. Dead code that touches the DOM isn't dead; it's a crash waiting for the next render path. When removing a widget, grep for its ID across `app.js`/`style.css` and delete every touchpoint (lookups, reads, writes, preservation logic).
+
+## 15. Grouped review beats a flat findings list at CSV scale
+
+Pasting CSV-scale text produced dozens of repeated quotes, so the flat Findings table duplicated the same decision per occurrence. Grouping by `(category, quote, replacement)` with bulk `Approve all` / `Reject all` plus `Approve/ Reject remaining` for the still-pending set cut review to one decision per unique value; expanding a group (`▸/▾`, collapsed by default) exposes the per-occurrence rows with full controls (source, confidence, resolvability, editable replacement). Rule: bulk at the group level, granular in the expansion — never two separate tables showing the same decisions.
+
+## 16. `free_text` redaction is a requirement question, not a bug
+
+`[REDACTED-<hash>]` appearing on user IDs looked wrong in testing but was working as designed: `namer.py` returns opaque placeholders for `free_text` because business-sensitive spans can't be faked realistically, and the Pass-2 prompt explicitly routes codenames/contract terms/internal names there. The fix was documentation (README + review hint) plus keeping the replacement editable — not changing the generator. When synthetic output looks "weird," check the category contract before touching the code.
+
+## 17. Console noise triage: favicon is ours, content-scripts are not
+
+`GET /favicon.ico 404` is a real (cosmetic) gap — no favicon shipped in `app/static/`. The `web-client-content-script.js ... Could not find identifiable element` stack, by contrast, exists nowhere in the repo and comes from a browser extension re-scanning the DOM on every approve. Verify by searching the repo for the filename, then confirm in an extension-free window before spending any effort.
