@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Data Obfuscator</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="bar">
+    <h1>Data Obfuscator</h1>
+    <span id="health" class="health">checking…</span>
+  </header>
+  <main>
+    <section class="panel">
+      <h2>Paste text</h2>
+      <div id="editor" contenteditable="true" class="editor" data-placeholder="Paste rich text or plain text here"></div>
+      <div class="actions">
+        <button id="analyze-btn">Analyze (Pass 1)</button>
+        <button id="clear-btn" class="secondary">Clear</button>
+      </div>
+    </section>
+    <section class="panel" id="results-panel" hidden>
+      <h2>Mapping table</h2>
+      <p class="hint">Bulk review: approve or reject a whole group here, or expand a row for per-finding review. Edits stay in the Findings table below.</p>
+      <table class="findings">
+        <thead>
+          <tr><th></th><th>Quote</th><th>Category</th><th>Replacement</th><th>Count</th><th>Status</th><th>Actions</th></tr>
+        </thead>
+        <tbody id="mapping-body"></tbody>
+      </table>
+      <h2>Findings</h2>
+      <table class="findings">
+        <thead>
+          <tr>
+            <th>#</th><th>Quote</th><th>Category</th><th>Replacement</th><th>Source</th><th>Confidence</th><th>Resolves?</th><th>Decision</th><th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="findings-body"></tbody>
+      </table>
+      <p id="warnings" class="warnings"></p>
+      <h2 id="unverified-heading" hidden>Pass 2 — not resolvable to exact text</h2>
+      <table class="findings" id="unverified-table" hidden>
+        <thead>
+          <tr><th>Quote</th><th>Category</th><th>Reason</th></tr>
+        </thead>
+        <tbody id="unverified-body"></tbody>
+      </table>
+      <p class="hint">Manual add (reviewer-verified): a Pass 2 finding that never maps exactly can be added here if you know the exact text.</p>
+      <div class="manual-add">
+        <input id="manual-quote" placeholder="exact verbatim quote" />
+        <select id="manual-category">
+          <option>person</option><option>org</option><option>place</option><option>free_text</option>
+        </select>
+        <button id="manual-add-btn" class="secondary">Add</button>
+      </div>
+      <div class="actions">
+        <button id="finalize-btn">Approve decisions &amp; finalize</button>
+      </div>
+    </section>
+
+    <section class="panel" id="final-panel" hidden>
+      <h2>Final obfuscated output</h2>
+      <p id="final-warnings" class="warnings"></p>
+      <h3>Plain text output</h3>
+      <pre id="final-txt" class="plain-output"></pre>
+      <details class="html-acc">
+        <summary>HTML output</summary>
+        <iframe id="final-html" class="preview" sandbox=""></iframe>
+      </details>
+      <div class="actions">
+        <button id="copy-txt-btn" class="secondary">Copy TXT</button>
+        <button id="copy-html-btn" class="secondary">Copy HTML</button>
+        <a id="download-txt" download="obfuscated.txt"><button class="secondary" type="button">Download TXT</button></a>
+      </div>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

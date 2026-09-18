@@ -1,0 +1,20 @@
+# Data Obfuscator — single-tenant, no persistence, no auth.
+# Everything app-side runs here; the LLM must be provided by the HOST
+# (LM Studio / Unsloth Studio at OBFUSCATOR_LLM_BASE_URL).
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: data-obfuscator
+    ports:
+      - "8000:8000"
+    env_file:
+      - ../.env
+    environment:
+      # Reach the HOST LLM server from inside the container.
+      OBFUSCATOR_LLM_BASE_URL: http://host.docker.internal:8888/v1
+      OBFUSCATOR_LLM_CONNECT_TIMEOUT: "10"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
