@@ -33,7 +33,7 @@ body {
 .health.err { color: #d99f9f; }
 
 main {
-  max-width: 900px;
+  max-width: 1200px;
   margin: 24px auto;
   padding: 0 16px;
   display: grid;
@@ -41,6 +41,7 @@ main {
 }
 
 .panel {
+  min-width: 0;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -64,7 +65,7 @@ main {
 }
 .editor:focus { outline: 2px solid var(--accent); }
 
-.actions { margin-top: 12px; display: flex; gap: 8px; }
+.actions { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 8px; }
 
 button {
   font: inherit;
@@ -74,9 +75,26 @@ button {
   background: var(--ink);
   color: #fff;
   cursor: pointer;
+  transition: background-color 120ms, box-shadow 120ms, transform 120ms;
 }
 button.secondary { background: transparent; color: var(--ink); border-color: var(--line); }
+button:not(:disabled):hover { background: #555; }
+button.secondary:not(:disabled):hover { background: #efedea; }
+button:not(:disabled):active, button.clicked {
+  transform: translateY(1px);
+  box-shadow: inset 0 0 0 2px #8e8b84;
+}
+button:focus-visible { outline: 2px solid #6b83ad; outline-offset: 2px; }
+button[aria-pressed="true"] { background: #dfe9df; color: #244524; border-color: #709070; }
+button[data-mact="reject-all"][aria-pressed="true"], button[data-act="reject"][aria-pressed="true"] {
+  background: #f1dddd; color: #672d2d; border-color: #aa7373;
+}
 button:disabled { opacity: 0.5; cursor: default; }
+
+.table-scroll { overflow-x: auto; }
+table.findings td.value { max-width: 380px; overflow-wrap: anywhere; }
+table.findings td.row-actions { white-space: nowrap; }
+table.findings td.row-actions button { white-space: nowrap; }
 
 table.findings {
   width: 100%;

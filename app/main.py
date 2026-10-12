@@ -1,10 +1,12 @@
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from typing import Literal
 
 from .ingest import HtmlTextMap, apply_plain_edits
 from .render import merge_findings, build_mapping_table, render_outputs
 from .namer import replacement_for
+from .csv_text import csv_scan, filter_csv_findings
 from . import pass2_llm
 
 app = FastAPI(title="Data Obfuscator", version="0.5.0")
@@ -21,7 +23,7 @@ class Decision(BaseModel):
     quote: str
     category: str
     replacement: str | None = None
-    status: str                        # approved | edited | rejected
+    status: Literal["approved", "edited", "rejected"]
     source: str | None = None
 
 
@@ -62,7 +64,11 @@ def analyze(req: AnalyzeRequest) -> dict:
         plain = html_map.plain_text
     else:
         plain = req.text or ""
-    pass2_findings, llm_unverified, llm_errors = pass2_llm.detect(plain)
+    scan = csv_scan(plain) if src is None else None
+    pass2_findings, llm_unverified, llm_errors = pass2_llm.detect(scan.text if scan is not None else plain)
+    if scan is not None:
+        pass2_findings, csv_unverified = scan.map_findings(pass2_findings)
+        llm_unverified.extend(csv_unverified)
     findings, dropped = merge_findings(plain, pass2_findings)
     if src is not None:
         for f in findings:
@@ -74,6 +80,7 @@ def analyze(req: AnalyzeRequest) -> dict:
     html_out, txt_out, render_unresolved = render_outputs(src, plain, findings)
     return {
         "plain_text": plain,
+        "csv_values": [u.value for u in scan.units for _ in u.occurrences] if scan is not None else None,
         "findings": findings,
         "mapping_table": mapping_table,
         "dropped": dropped,
@@ -96,6 +103,7 @@ def finalize(req: FinalizeRequest) -> dict:
         plain = req.text or ""
 
     selected = []
+    scan = csv_scan(plain) if src is None else None
     dropped = []
     warnings = []
     for decision in req.decisions:
@@ -106,6 +114,15 @@ def finalize(req: FinalizeRequest) -> dict:
         if decision.start is None or decision.start < 0:
             # Manual review add: map the quote to ALL verbatim occurrences.
             replacement = decision.replacement or replacement_for(decision.category, decision.quote)
+            if scan is not None:
+                spans = scan.quote_spans(decision.quote)
+                for start, end in spans:
+                    selected.append({"start": start, "end": end, "quote": plain[start:end],
+                                     "category": decision.category, "replacement": replacement,
+                                     "source": decision.source or "manual", "confidence": 1.0})
+                if not spans:
+                    warnings.append(f"manual quote not found inside a CSV field: {decision.quote[:60]!r}")
+                continue
             search_at = 0
             occurrences = 0
             while True:
@@ -151,6 +168,12 @@ def finalize(req: FinalizeRequest) -> dict:
                 "confidence": 1.0,
             }
         )
+
+    if src is None:
+        selected, csv_skipped = filter_csv_findings(plain, selected)
+        dropped.extend(csv_skipped)
+        if csv_skipped:
+            warnings.append(f"Skipped {len(csv_skipped)} replacement(s) crossing CSV field boundaries or splitting escaped quotes.")
 
     # Overlap safety on final selections (longest span wins).
     ordered = sorted(selected, key=lambda f: (f["start"], -(f["end"] - f["start"])))

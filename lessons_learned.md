@@ -1,6 +1,6 @@
 # Lessons Learned — Data Obfuscator
 
-Practical notes captured while building steps 1–3, written down so we don't pay for them twice.
+Practical notes captured while building ingestion, detection, review, and Docker packaging. Historical examples are retained, with implementation claims checked against the current repository.
 
 ## 1. Offset alignment is the whole game
 
@@ -16,27 +16,33 @@ Rule of thumb going forward: **if a file needs a `# placeholder removed below` c
 
 ## 3. HTMLParser was the wrong tool for offset maps
 
-First instinct was `html.parser.HTMLParser` for step 2. Its byte-level anchoring (via `getpos()`) is ambiguous for entity events, and mixing decoded values with source offsets gets messy fast. A hand-rolled regex tag tokenizer (`<[^>]+>` + `_scan`) with explicit trade-offs (documented: `>` inside attribute values is a known limitation) turned out simpler, fully deterministic, and 40 lines long. For structured HTML→spans work, prefer the smallest mechanism you can fully reason about.
+First instinct was `html.parser.HTMLParser` for step 2. Its line/column positions require translation to absolute character offsets, and mixing decoded entities with source offsets adds complexity. The current regex tag tokenizer (`<[^>]*>` + `_scan`) keeps text runs verbatim and documents its limitation with `>` inside attribute values. Prefer a mechanism whose offset behavior you can fully reason about; this tokenizer is not a general-purpose HTML parser or sanitizer.
 
 ## 4. Determinism gives consistency for free — hash, don't store
 
-Requirement: same source string → same replacement for every occurrence. The naive way is a session-scoped dict; the better way is making replacement a pure function: `replacement_for(category, source) = pick_from_pool(sha1(source + category))`. Benefits that fell out:
+Requirement: same source string and category → same default replacement for every detected occurrence. `replacement_for(category, source)` is a pure function: category selects the format or pools, while SHA-1 of the source string drives selection. It does not hash `source + category`. Benefits that fell out:
 
 - consistency across sessions and restarts, no persistence layer needed (matching the "no data persistence" requirement anyway)
 - tests can assert determinism with no setup
-- user-edited replacements later (step 5) can simply override entries in the table; the default remains hash-based
+- reviewer edits override individual detected occurrences while their status remains `edited`; the default remains hash-based
 
-## 5. Encode safety *styles* into generators, not documentation
+Consistency holds with unchanged code and pools. It does not imply unique replacements, alias recognition, or consistent custom edits across a group.
 
-Synthetic values are deliberately drawn from reserved or never-issued ranges: NANP `555-01xx`, SSA `9xx` group, Luhn-valid cards built only from `4...` test-style payloads, `example.net`/`example.com` domains. These can never reach a real person, and this is enforced in code, not promised in comments. (One real bug: a modulus typo produced a 17-digit "card" that broke Luhn validation — caught immediately by a test that asserted the full Luhn property, not just length.)
+## 5. Check generated formats before claiming reserved ranges
+
+The generator emits `(555) xxx-xxxx` phones, national IDs beginning with `9`, Luhn-valid 16-digit card-like values beginning with `4`, `XX` account placeholders, and addresses on `example.net`/`example.com`. Earlier notes overstated this as universally reserved output. Phones are not limited to `555-01xx`, cards do not use a test-number allowlist, and names or places may coincide with real entities. A prefix or checksum test cannot establish that an identifier is reserved.
+
+A historical modulus bug produced a 17-digit card-like value. A test of length and the full Luhn property caught it. Test the precise guarantee you want, and keep documentation within what the implementation enforces.
 
 ## 6. Confidence tiers encode *who is trusted*
 
-Regex hits: 0.85–1.00 (high precision). NER: capped at 0.90 so common NER false positives (dates-as-persons, org names inside emails) fall below the 0.85 review threshold planned for step 5. This "trust tier" pattern is cheap: it means the review queue is automatically populated by *lower* confidence signals rather than by ad-hoc flags. Expect to tune the boundary once Pass-2 LLM scores join the same scale in step 4.
+Regex scores are fixed at 0.85–1.00. NER scores are fixed by label: PERSON 0.90, ORG/GPE 0.85, LOC/FAC 0.80. The UI initially approves non-LLM scores >= 0.85, so most NER findings start approved; a 0.90 cap does not put them below the threshold. LLM scores are `min(0.80, max(0, raw)) * 0.8` (maximum 0.64), and all LLM findings start pending.
+
+These are trust heuristics, not calibrated probabilities. They control initial review status, not overlap resolution. Finalize accepts pending findings, so the review queue is advisory rather than a mandatory approval gate.
 
 ## 7. Regex confidences have surprises hiding in ranges
 
-Two test-driven adjustments: phone patterns are inherently noisy (they also match card segments and random digit runs, hence 0.85 not 1.0), and an IBAN regex must allow whitespace grouping to match realistic formatted IBANs. Overlap resolution (regex wins, longer-span wins) handles the cases where both categories claim the same span.
+Two test-driven adjustments: phone patterns are noisy (they also match card segments and random digit runs, hence 0.85 not 1.0), and an IBAN regex must allow whitespace grouping. Identical spans are deduplicated in regex → NER → LLM order. Other overlaps are resolved greedily by earlier start, then longer span, then source priority for ties. Regex does not always win against an earlier-starting LLM or NER span.
 
 ## 8. Testing property, not example
 
@@ -46,13 +52,15 @@ The Luhn bug (lesson 5) was caught because the test validated the *property* (fu
 
 On two occasions, a failing test revealed the production code was right and the test was wrong (hand-computed spans). Caught because I re-derived the mapping by hand instead of trusting test failure as truth. In span-offset code, the failure rate of *hand arithmetic in tests* is high enough that tests here should be built structurally (find the prefix via `str.find`, derive lengths from the found quote) rather than hard-coded numbers.
 
-## 10. Speed matters more than size below 1B params
+## 10. Measure latency and recall on representative documents
 
-`en_core_web_trf` (457 MB + torch download) loads and runs on CPU at ~4s for the full test suite at document scale. Don't pre-optimize by reaching for `en_core_web_md`; revisit only if real documents show latency problems. Same expected principle for step 4: a gemma-class quant served by LM Studio is plenty for detection-sized prompts at this text scale; don't reach for a bigger local model until detection recall on real documents says so.
+The implementation loads `en_core_web_trf` lazily on CPU. An earlier development run reported roughly four seconds for the suite, but that is a historical observation without a recorded hardware/model baseline, not a current performance guarantee. First analysis also includes model loading.
+
+Pass 2 processes overlapping 2,400-character chunks sequentially before regex + NER. Model choice, server availability, document length, and chunk count affect latency. Measure latency and detection recall on representative documents before changing models; no model-quality benchmark is checked into this repository.
 
 ## 11. Surface resolvability, don't hide it
 
-Making "Resolves?" a UI column and returning `unresolved_render_edits` alongside every render keeps silent failures out of the pipeline. A tool whose whole job is replacing text exactly where it was found must never quietly drop an edit — those need to become human review items (step 5), not disappearing failures.
+The API returns `unresolved_render_edits` during analysis; expanded review rows show whether HTML spans resolve, and finalize emits warnings. TXT replacements still apply, but unresolved HTML text remains original. The `applied` count reflects selected spans, not proof that every HTML edit succeeded. Review output and warnings together.
 
 ## 12. Every `getElementById` is a contract with the HTML — enforce it
 
@@ -76,4 +84,16 @@ Pasting CSV-scale text produced dozens of repeated quotes, so the flat Findings 
 
 ## 17. Console noise triage: favicon is ours, content-scripts are not
 
-`GET /favicon.ico 404` is a real (cosmetic) gap — no favicon shipped in `app/static/`. The `web-client-content-script.js ... Could not find identifiable element` stack, by contrast, exists nowhere in the repo and comes from a browser extension re-scanning the DOM on every approve. Verify by searching the repo for the filename, then confirm in an extension-free window before spending any effort.
+Historically, `GET /favicon.ico 404` exposed a missing favicon. The current HTML references `/ObfuscatorShield.svg`, which is shipped in `app/static/`; a separate `/favicon.ico` request may still return 404. The historical `web-client-content-script.js ... Could not find identifiable element` stack referenced no repository file and was attributed to a browser extension. Search for the filename and reproduce in an extension-free window before assigning console errors to the app.
+
+## 18. Review state must survive UI refreshes
+
+Current `refreshTable()` calls `renderResults()` with empty error, unverified, and dropped lists. Review actions therefore clear those displays. Manual add also repeats `/api/analyze` and may repeat LLM work. These are current limitations: retain diagnostics across table refreshes and avoid re-analysis merely to check a manual quote.
+
+Approving a detected finding after editing it changes `edited` to `approved`; finalize then recomputes the default replacement. Leave edited findings in the `edited` state to preserve custom values. Group controls also do not remove manual entries. Review status and replacement state need to be handled together in future UI changes.
+
+## 19. Deployment configuration is part of the privacy contract
+
+Local setup needs `requirements-full.txt`, not skeleton-only `requirements.txt`. Compose requires a project-root `.env` and overrides its LLM base URL with `http://host.docker.internal:8888/v1`. Manual Docker must also set the host URL; the Python default points at container loopback inside Docker.
+
+Compose currently publishes `8000:8000`, while the app has no authentication. Restrict it to `127.0.0.1:8000:8000` for machine-local access. No application database does not imply that the separate LLM server avoids logging. Preserved HTML attributes and skipped script/style content are outside obfuscation coverage.

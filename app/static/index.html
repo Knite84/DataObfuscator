@@ -10,30 +10,37 @@
 <body>
   <header class="bar">
     <h1>Data Obfuscator</h1>
-    <span id="health" class="health">checking…</span>
+    <span id="health" class="health" role="status">LLM: checking…</span>
   </header>
   <main>
-    <section class="panel">
-      <h2>Paste text</h2>
+    <section class="panel" id="input-panel" aria-labelledby="input-heading">
+      <p class="meta">Step 1 of 3 · Input</p>
+      <h2 id="input-heading" tabindex="-1">Paste text</h2>
       <div id="editor" contenteditable="true" class="editor" data-placeholder="Paste rich text or plain text here"></div>
       <div class="actions">
-        <button id="analyze-btn">Analyze (Pass 1)</button>
+        <button id="analyze-btn">Analyze</button>
+        <button id="return-review-btn" class="secondary" hidden>Return to review</button>
         <button id="clear-btn" class="secondary">Clear</button>
       </div>
+      <p id="review-stale-hint" class="hint" hidden>Input changed. Analyze again to update the review.</p>
+      <p id="input-warnings" class="warnings" role="alert"></p>
     </section>
-    <section class="panel" id="results-panel" hidden>
-      <h2>Mapping table</h2>
+    <section class="panel" id="results-panel" aria-labelledby="review-heading" hidden>
+      <p class="meta">Step 2 of 3 · Review</p>
+      <h2 id="review-heading" tabindex="-1">Mapping table</h2>
       <p class="hint">Bulk review: approve or reject a whole group here, or expand a row for per-finding review and edits.</p>
       <div class="table-actions">
         <button id="approve-remaining-btn" class="secondary">Approve remaining</button>
         <button id="reject-remaining-btn" class="secondary">Reject remaining</button>
       </div>
+      <div class="table-scroll">
       <table class="findings">
         <thead>
           <tr><th></th><th>Quote</th><th>Category</th><th>Replacement</th><th>Count</th><th>Status</th><th>Actions</th></tr>
         </thead>
         <tbody id="mapping-body"></tbody>
       </table>
+      </div>
       <p id="warnings" class="warnings"></p>
       <h2 id="unverified-heading" hidden>Pass 2 — not resolvable to exact text</h2>
       <table class="findings" id="unverified-table" hidden>
@@ -42,7 +49,7 @@
         </thead>
         <tbody id="unverified-body"></tbody>
       </table>
-      <p class="hint">Manual add (reviewer-verified): a Pass 2 finding that never maps exactly can be added here if you know the exact text.</p>
+      <p class="hint">Manual add (reviewer-verified): if a finding cannot be mapped safely, add the exact text here.</p>
       <div class="manual-add">
         <input id="manual-quote" placeholder="exact verbatim quote" />
         <select id="manual-category">
@@ -51,12 +58,15 @@
         <button id="manual-add-btn" class="secondary">Add</button>
       </div>
       <div class="actions">
-        <button id="finalize-btn">Approve decisions &amp; finalize</button>
+        <button id="back-input-btn" class="secondary">Back to input</button>
+        <button id="finalize-btn">Finalize</button>
       </div>
+      <p id="review-progress" class="hint" role="status"></p>
     </section>
 
-    <section class="panel" id="final-panel" hidden>
-      <h2>Final obfuscated output</h2>
+    <section class="panel" id="final-panel" aria-labelledby="output-heading" hidden>
+      <p class="meta">Step 3 of 3 · Output</p>
+      <h2 id="output-heading" tabindex="-1">Final obfuscated output</h2>
       <p id="final-warnings" class="warnings"></p>
       <h3>Plain text output</h3>
       <pre id="final-txt" class="plain-output"></pre>
@@ -68,6 +78,11 @@
         <button id="copy-txt-btn" class="secondary">Copy TXT</button>
         <button id="copy-html-btn" class="secondary">Copy HTML</button>
         <a id="download-txt" download="obfuscated.txt"><button class="secondary" type="button">Download TXT</button></a>
+      </div>
+      <p id="copy-feedback" class="hint" role="status"></p>
+      <div class="actions">
+        <button id="back-review-btn" class="secondary">Back to review</button>
+        <button id="start-over-btn" class="secondary">Start over</button>
       </div>
     </section>
   </main>

@@ -2,7 +2,9 @@
 from .ingest import apply_plain_edits
 from .pass1_regex import find as regex_find
 from .pass1_ner import find as ner_find
+from .pass1_ner import find_many as ner_find_many
 from .namer import replacement_for
+from .csv_text import csv_cells, csv_scan, filter_csv_findings, render_csv_edits
 
 _SOURCE_PRIORITY = {"regex": 0, "spacy": 1, "llm": 2}
 
@@ -35,7 +37,17 @@ def merge_findings(plain_text: str, extra_findings: list | None = None) -> tuple
     overlaps, and attach a deterministic replacement to each kept finding.
 
     Returns (findings, dropped)."""
-    all_findings = regex_find(plain_text) + ner_find(plain_text) + list(extra_findings or [])
+    scan = csv_scan(plain_text)
+    if scan is None:
+        pass1 = regex_find(plain_text) + ner_find(plain_text)
+    else:
+        decoded_findings = []
+        ner_results = ner_find_many([unit.value for unit in scan.units])
+        for unit, ner_hits in zip(scan.units, ner_results):
+            for hit in regex_find(unit.value) + ner_hits:
+                decoded_findings.append({**hit, "start": unit.start + hit["start"], "end": unit.start + hit["end"]})
+        pass1, _ = scan.map_findings(decoded_findings)
+    all_findings = pass1 + list(extra_findings or [])
     combined = []
     seen_cross = set()
     for f in all_findings:
@@ -44,7 +56,9 @@ def merge_findings(plain_text: str, extra_findings: list | None = None) -> tuple
             continue
         seen_cross.add(key)
         combined.append(f)
+    combined, csv_skipped = filter_csv_findings(plain_text, combined)
     kept, dropped = resolve_overlaps(combined)
+    dropped.extend(csv_skipped)
     for f in kept:
         f["replacement"] = replacement_for(f["category"], f["quote"])
     return kept, dropped
@@ -82,6 +96,9 @@ def render_outputs(src_html: str | None, plain_text: str, findings: list) -> tup
     unresolved = []
     for edit in sorted(edits, key=lambda e: -e["start"]):
         text_out = text_out[: edit["start"]] + edit["replacement"] + text_out[edit["end"] :]
+    cells = csv_cells(plain_text) if src_html is None else None
+    if cells is not None:
+        text_out = render_csv_edits(plain_text, cells, edits)
     if src_html is not None:
         html_out, unresolved, _ = apply_plain_edits(src_html, edits)
     else:

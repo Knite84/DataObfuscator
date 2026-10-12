@@ -23,6 +23,15 @@ def _get_model():
 
 def find(text: str) -> list:
     doc = _get_model()(text)
+    return _find_in_doc(doc)
+
+
+def find_many(texts: list[str]) -> list[list]:
+    """Scan independent CSV values in batches, keeping their boundaries apart."""
+    return [_find_in_doc(doc) for doc in _get_model().pipe(texts, batch_size=8)]
+
+
+def _find_in_doc(doc) -> list:
     hits = []
     for ent in doc.ents:
         label = ent.label_
