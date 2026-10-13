@@ -79,6 +79,23 @@ The server must support `GET /v1/models` and `POST /v1/chat/completions`. No par
 
 > **Execution order.** The list above groups responsibilities. In `app/main.py`, ingestion is followed by Pass 2, then regex + NER inside `merge_findings`, then merging, HTML span resolution, mapping, and draft rendering. The passes run sequentially. Diagram labels refer back to the numbered responsibilities above.
 
+### What the scanners do and when they run
+
+**Regex (regular expressions)** matches predefined text patterns, such as an email address or a sequence of digits formatted like an SSN. It recognizes formats rather than interpreting meaning, and a match does not establish that an identifier is real. **spaCy** is a Python library for processing human language; this app uses its trained English model for named entity recognition (people, organizations, and places). **The local LLM** uses context to suggest identifying or business-sensitive quotes, including project names and contract terms. All three detect text; application code generates and applies replacements.
+
+Within one Analyze request, scanner execution is serial, with no explicit parallel scanner work:
+
+| Input | Actual detection sequence |
+|-------|---------------------------|
+| Ordinary text or HTML converted to plain text | LLM chunk requests → regex → spaCy |
+| Recognized pasted CSV | LLM chunk requests over unique decoded values → spaCy batches of unique values → regex for each unique value |
+
+The labels Pass 1 and Pass 2 describe scanner responsibilities, not execution order. Each scanner examines the original input or its decoded field values; the LLM receives neither regex/spaCy results nor already-obfuscated text.
+
+For ordinary text, regex runs once as a scanner invocation (checking each configured pattern), and spaCy scans the text once. The LLM makes one request per 2,400-character chunk, with 240 characters of overlap, waiting for each response before requesting the next chunk. A 10,000-character input requires five chunk requests. These cover successive portions of the input rather than repeated refinement of the same answer. Overlap can produce duplicate suggestions. For CSV, repeated field values are scanned once and findings are mapped back to every matching cell; spaCy batches eight unique values at a time without explicitly running alongside another scanner.
+
+Analyze starts a fresh detection run. Review actions, manual mapping previews, and Finalize do not rerun detection. If the LLM is disabled or unavailable, regex and spaCy still run.
+
 ```mermaid
 flowchart TD
     IN["Input: HTML or plain text"] --> ING["1. Ingestion — app/ingest.py<br/>(README step 1)<br/>tokenize HTML, map to plain text<br/>text runs kept verbatim, 1:1 offsets<br/>br and block closings insert newlines<br/>script/style skipped"]
@@ -88,7 +105,7 @@ flowchart TD
     RES -->|"exact or plain-text input"| MT
     UNRES --> MT
 
-    subgraph PASS1["Pass 1 — deterministic"]
+    subgraph PASS1["Pass 1 — regex and trained NER"]
         P1["2a. Regex — app/pass1_regex.py<br/>(README step 2)<br/>email, phone, SSN, URL, card, IBAN<br/>high confidence"]
         P1B["2b. NER — app/pass1_ner.py<br/>(README step 2)<br/>spaCy en_core_web_trf<br/>PERSON, ORG, GPE, LOC, FAC<br/>capped confidence"]
     end
@@ -127,19 +144,27 @@ If all 20 occurrences of "John Smith" are detected under the same category, they
 
 Plain-text pastes (including CSV copied from Notepad) use the text input path, so browser-generated line-break tags do not encode ampersands or angle brackets as HTML entities. Copy TXT copies the final text without adding quotes or otherwise serializing it. CSV field quotes already present in the input remain necessary for commas, embedded quotes, and multiline values.
 
-Comma-separated text with at least two nonempty rows and a consistent field count is recognized as CSV. Regex and spaCy scan each unique decoded field independently; spaCy uses batches. The LLM receives unique decoded field values separated by blank lines, and its findings must map wholly into a single value. Findings map back to every matching field in the original CSV, including doubled quotes and multiline values. Replacements stay within a single field, and replacement commas, quotes, or newlines are escaped as CSV data. Unsafe or unmappable findings are listed for manual review; their warnings remain visible as decisions change. Manual quotes match decoded field content.
+**CSV is recognized from pasted plain text; there is no file-upload control.** Open a `.csv` in a text editor, copy its contents, and paste them into the input. Recognition requires at least two nonempty rows, at least two comma-separated fields per row, a consistent field count, and valid quoting. Tab-separated clipboard text, commonly produced when copying Excel cells, follows the ordinary text path rather than the CSV path. Rich HTML input also follows the HTML path.
+
+For recognized CSV, regex and spaCy scan each unique decoded field independently; spaCy uses batches. The LLM receives unique decoded field values separated by blank lines, and its findings must map wholly into a single value. Findings map back to every matching field in the original CSV, including doubled quotes and multiline values. Replacements stay within a single field, and replacement commas, quotes, or newlines are escaped as CSV data. Unsafe or unmappable findings are listed for manual review; their reasons remain visible as decisions change. Manual quotes match decoded field content.
+
+**Pending and unmapped mean different things.** Pending detected findings have exact mapped spans and proposed replacements, but need a review decision. Unmapped suggestions failed automatic validation and require Add Mapping or Dismiss. For example, `AA` can exist verbatim in the input but fail the LLM's minimum quote length of three characters after trimming whitespace; its reason is `quote too short`. Saving a verified manual mapping bypasses that automatic length restriction and shows the chosen replacement before finalization. Overlapping detections skipped during merging are separate from unmapped suggestions and are summarized under Analysis details.
 
 ```mermaid
 flowchart TD
     S["1. Paste text and Analyze<br/>(README step 1)<br/>Pass 1 regex + spaCy, Pass 2 LLM"] --> B["2. Mapping table<br/>(README step 2)<br/>each row = one (category, quote, replacement) group"]
     B --> B1["Bulk: Approve all / Reject all per group"]
     B --> B2["Expand for per-finding rows<br/>source, confidence, resolvability,<br/>editable replacement, individual Approve/Reject"]
-    B1 --> C["Approve remaining / Reject remaining<br/>settles everything still pending"]
+    B1 --> C["Approve remaining / Reject remaining<br/>settles pending detected findings only"]
     B2 --> C
-    B --> D["3. If present: Pass 2 — not resolvable<br/>inspect unmappable LLM hits"]
-    D --> D1["Manual add: re-add exact spans if verified"]
+    B --> D["3. Manual verification on the same page<br/>inspect unique unmapped suggestions"]
+    D --> D1["Add Mapping: verify quote, category,<br/>replacement and exact occurrences"]
+    D --> D2["Dismiss a suggestion if no mapping is needed"]
     D1 --> B
-    C --> E["4-5. Finalize and inspect output<br/>all findings must have a review decision"]
+    C --> READY["4. Both sections reviewed,<br/>active replacements nonblank,<br/>manual form saved or canceled"]
+    D1 --> READY
+    D2 --> READY
+    READY --> E["5. Finalize and inspect output"]
     E --> F["Plain-text output shown first<br/>HTML in a closed accordion"]
     F --> G["Copy TXT / HTML source<br/>or download TXT"]
 ```
@@ -148,6 +173,7 @@ flowchart TD
 
 - `GET  /api/health` — app status + named passes + LLM availability/model; does not load or verify the spaCy model
 - `POST /api/analyze` — `{html?, text?}` → `plain_text`, findings (with `replacement`, and `source_span` for HTML input), mapping table, `html_preview`, `txt_preview`, `html_out`, `unresolved_render_edits`, `llm_unverified`, `llm_errors`, `dropped`
+- `POST /api/mapping-preview` — `{html?, text?, quote, category}` → `{replacement, count, contexts}`; uses finalization's exact matching rules, returns up to 20 contexts, and does not invoke detection
 - `POST /api/finalize` — `{html? | text?, decisions[]}` → `{html, txt, mapping_table, applied, dropped, warnings}`
 
 When both inputs are supplied, nonempty `html` takes precedence over `text`. Decisions use character offsets in the ingested plain text, not the HTML source. A manual decision uses `start: null`, a nonempty exact quote, category, and status. Detected decisions include `start` and `end`; use status `edited` with a replacement to override the default.

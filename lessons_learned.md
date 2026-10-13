@@ -36,9 +36,9 @@ A historical modulus bug produced a 17-digit card-like value. A test of length a
 
 ## 6. Confidence tiers encode *who is trusted*
 
-Regex scores are fixed at 0.85–1.00. NER scores are fixed by label: PERSON 0.90, ORG/GPE 0.85, LOC/FAC 0.80. The UI initially approves non-LLM scores >= 0.85, so most NER findings start approved; a 0.90 cap does not put them below the threshold. LLM scores are `min(0.80, max(0, raw)) * 0.8` (maximum 0.64), and all LLM findings start pending.
+Regex scores are fixed at 0.85–1.00. NER scores are fixed by label: PERSON 0.90, ORG/GPE 0.85, LOC/FAC 0.80. LLM scores are `min(0.80, max(0, raw)) * 0.8` (maximum 0.64). Every detected finding now starts pending, regardless of its source or score.
 
-These are trust heuristics, not calibrated probabilities. They control initial review status, not overlap resolution. Finalize accepts pending findings, so the review queue is advisory rather than a mandatory approval gate.
+These are trust heuristics, not calibrated probabilities. They do not determine approval or overlap resolution. The API rejects pending decision statuses, and the UI requires a decision for every detected finding and unique manual suggestion before enabling Finalize.
 
 ## 7. Regex confidences have surprises hiding in ranges
 
@@ -88,12 +88,32 @@ Historically, `GET /favicon.ico 404` exposed a missing favicon. The current HTML
 
 ## 18. Review state must survive UI refreshes
 
-Current `refreshTable()` calls `renderResults()` with empty error, unverified, and dropped lists. Review actions therefore clear those displays. Manual add also repeats `/api/analyze` and may repeat LLM work. These are current limitations: retain diagnostics across table refreshes and avoid re-analysis merely to check a manual quote.
+Earlier table refreshes cleared diagnostics, and manual add repeated `/api/analyze`, potentially repeating LLM work. The current UI retains the analysis response in `reviewContext`, maintains suggestion decisions separately, and uses `/api/mapping-preview` to check exact occurrences and generate a replacement without detection.
 
-Approving a detected finding after editing it changes `edited` to `approved`; finalize then recomputes the default replacement. Leave edited findings in the `edited` state to preserve custom values. Group controls also do not remove manual entries. Review status and replacement state need to be handled together in future UI changes.
+Approving a custom detected replacement now retains the `edited` status needed to honor it at finalization. Group controls include manual mappings; rejecting one reopens its associated suggestions, and reapproving restores their mapped state. Bulk remaining actions still affect detected findings only. Review status, replacement value, and suggestion resolution must be updated together.
+
+Replacement edits are saved to state on input without rebuilding the table on every keystroke or blur. Replacing the row during blur can remove the button the user is about to click and lose the intended action. Row controls retain their member references so regrouping after an edit does not target another mapping.
 
 ## 19. Deployment configuration is part of the privacy contract
 
 Local setup needs `requirements-full.txt`, not skeleton-only `requirements.txt`. Compose requires a project-root `.env` and overrides its LLM base URL with `http://host.docker.internal:8888/v1`. Manual Docker must also set the host URL; the Python default points at container loopback inside Docker.
 
 Compose currently publishes `8000:8000`, while the app has no authentication. Restrict it to `127.0.0.1:8000:8000` for machine-local access. No application database does not imply that the separate LLM server avoids logging. Preserved HTML attributes and skipped script/style content are outside obfuscation coverage.
+
+## 20. Make manual verification a visible, complete review step
+
+A manual mapping previously appeared approved with `[pending]` in its replacement column, while the server generated the replacement only at finalization. That prevented meaningful review. Manual mappings now preview their actual default replacement, allow editing, show exact occurrence counts and up to 20 contexts, and require explicit Save mapping.
+
+Detected mappings and manual verification remain on one page, but numbered headings, section navigation with counts, and a distinct manual panel make both parts visible. Finalize requires both sections to be reviewed, nonblank active replacements, and no open manual form. Each unique suggestion requires Add Mapping or Dismiss; duplicates share a decision, and mapped suggestions link to their table row. Overlap statistics belong in Analysis details rather than repeating the manual-review heading.
+
+Use reasons that describe the actual validation failure. A two-character quote may be present in the source yet fail the automatic minimum length check; that is not proof it cannot be found verbatim. Manual mappings can handle verified short quotes, but replace every exact occurrence, including substrings inside longer text.
+
+## 21. Describe execution order separately from pass names
+
+Pass 1 and Pass 2 are responsibility labels. Actual execution is serial: LLM chunks first, then regex and spaCy for ordinary text. For recognized CSV, the order after the LLM is spaCy batches followed by regex per unique decoded field value. Scanners inspect original content independently; the LLM does not consume earlier findings or rewrite text. Multiple LLM requests cover overlapping chunks, not iterative refinement of one answer.
+
+CSV handling recognizes pasted plain text, not a file upload. Repeated decoded field values are scanned once and mapped back to all matching cells. Tab-separated Excel clipboard text is not recognized as CSV. Document supported input paths explicitly so users do not infer an upload control or spreadsheet-format support that is absent.
+
+## Session verification — 2026-10-12
+
+The suite passed with 62 tests and 12 subtests, including new manual-preview tests for matching/finalization parity, custom replacements, CSV and HTML input, missing quotes, and the 20-context limit. Browser checks used synthetic suggestions to verify duplicate grouping, bulk approval isolation, suggested person/free-text replacements, inline edits reaching output, empty replacement gating, and manual rejection reopening a suggestion. These checks validate application behavior, not live LLM detection quality.
