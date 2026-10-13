@@ -20,6 +20,15 @@ const unverifiedBody = document.getElementById("unverified-body");
 const manualQuoteEl = document.getElementById("manual-quote");
 const manualCategoryEl = document.getElementById("manual-category");
 const manualAddBtn = document.getElementById("manual-add-btn");
+const manualForm = document.getElementById("manual-form");
+const manualReplacementEl = document.getElementById("manual-replacement");
+const manualError = document.getElementById("manual-error");
+let suggestions = [];
+let activeSuggestion = null;
+let previewVersion = 0;
+let previewData = null;
+let previewTimer;
+let replacementCustomized = false;
 const finalizeBtn = document.getElementById("finalize-btn");
 const finalPanel = document.getElementById("final-panel");
 const finalWarnings = document.getElementById("final-warnings");
@@ -121,12 +130,21 @@ async function analyze() {
       replacementValue: f.replacement ?? "",
     }));
     manualAdds = [];
+    const skipped = (result.dropped || []).filter(f => (f.reason || "").includes("CSV"));
+    const unique = new Map();
+    [...(result.llm_unverified || []), ...skipped].forEach(u => {
+      const key = JSON.stringify([u.quote, u.category]);
+      if (!unique.has(key)) unique.set(key, { ...u, status: "pending", reasons: new Set() });
+      unique.get(key).reasons.add(u.mapping_reason || u.reason || "Could not map automatically");
+    });
+    suggestions = [...unique.values()].map(u => ({ ...u, reason: [...u.reasons].join("; ") }));
+    closeManualForm();
     manualQuoteEl.value = "";
     manualCategoryEl.value = "free_text";
     expandedGroups = new Set();
     reviewContext = result;
-    renderResults(result);
     lastSource = source;
+    renderResults(result);
     hasReview = true;
     showStep(resultsPanel);
   } catch (err) {
@@ -149,7 +167,7 @@ function buildGroups() {
         key,
         quote: f.quote,
         category: f.category,
-        replacement: f.status === "edited" ? f.replacementValue : f.replacementValue || "[pending]",
+        replacement: f.replacementValue,
         members: [],
         manualMembers: [],
       });
@@ -163,7 +181,7 @@ function buildGroups() {
         key,
         quote: a.quote,
         category: a.category,
-        replacement: a.replacementValue || "[pending]",
+        replacement: a.replacementValue,
         members: [],
         manualMembers: [],
       });
@@ -175,7 +193,9 @@ function buildGroups() {
 
 function groupStatus(group) {
   const statuses = group.members.map((i) => items[i].status);
-  group.manualMembers.forEach(() => statuses.push("approved"));
+  group.manualMembers.forEach(j => {
+    for (let n = 0; n < manualAdds[j].count; n++) statuses.push(manualAdds[j].status);
+  });
   if (!statuses.length) return "—";
   const counts = {};
   statuses.forEach((s) => { counts[s] = (counts[s] || 0) + 1; });
@@ -184,30 +204,44 @@ function groupStatus(group) {
   return `mixed (${parts.join(", ")})`;
 }
 
-function renderResults(result) {
+function updateReviewProgress() {
   const pending = items.filter(f => f.status === "pending").length;
-  reviewProgress.textContent = pending
-    ? `${pending} finding(s) still need approval or rejection before finalizing.`
-    : "All findings reviewed. Ready to finalize.";
+  const unresolved = suggestions.filter(u => u.status === "pending").length;
+  const invalid = [...items, ...manualAdds].some(f => f.status !== "rejected" && !f.replacementValue.trim());
+  finalizeBtn.disabled = Boolean(pending || unresolved || invalid || !manualForm.hidden);
+  document.getElementById("detected-count").textContent = pending ? `(${pending} pending)` : "(reviewed)";
+  document.getElementById("manual-count").textContent = unresolved ? `(${unresolved} need a decision)` : "(reviewed)";
+  reviewProgress.textContent = pending || unresolved
+    ? `${pending ? `${pending} detected finding(s) still need approval or rejection.` : "Detected mappings reviewed."} ${unresolved} manual suggestion(s) still need a decision.`
+    : invalid ? "Enter a replacement for each active mapping before finalizing."
+    : !manualForm.hidden ? "Save or cancel the open manual mapping before finalizing."
+    : "All detected mappings and manual suggestions reviewed. Ready to finalize.";
+}
+
+function renderResults(result) {
+  updateReviewProgress();
+  const unresolved = suggestions.filter(u => u.status === "pending").length;
   mappingBody.innerHTML = "";
   const groups = buildGroups();
   groups.forEach((g, gi) => {
-    const count = g.members.length + g.manualMembers.length;
+    const count = g.members.length + g.manualMembers.reduce((n, j) => n + manualAdds[j].count, 0);
     const expanded = expandedGroups.has(g.key);
     const tr = document.createElement("tr");
-    if (g.members.length && g.members.every((i) => items[i].status === "rejected")) tr.className = "rejected";
+    tr.id = `mapping-${gi}`;
+    tr.mappingGroup = g;
+    if ([...g.members.map(i => items[i]), ...g.manualMembers.map(j => manualAdds[j])].every(f => f.status === "rejected")) tr.className = "rejected";
     else if (g.members.some((i) => items[i].status === "pending")) tr.className = "needs-review";
     const summary = groupStatus(g);
     tr.innerHTML = `
       <td><button data-mact="toggle" data-gidx="${gi}" class="mini toggle">${expanded ? "▾" : "▸"}</button></td>
       <td class="value">${escapeHtml(g.quote)}</td>
       <td class="cat">${escapeHtml(g.category)}</td>
-      <td class="value">${escapeHtml(g.replacement)}</td>
+      <td class="value"><input class="group-repl repl" data-members="${g.members.join(",")}" data-manual-members="${g.manualMembers.join(",")}" aria-label="Replacement for ${escapeHtml(g.quote)}" value="${escapeHtml(g.replacement)}" /></td>
       <td>${count}</td>
       <td>${escapeHtml(summary)}</td>
       <td class="row-actions">
-        <button data-mact="approve-all" data-gidx="${gi}" class="mini" aria-pressed="${g.members.length > 0 && g.members.every(i => items[i].status === "approved" || items[i].status === "edited")}">Approve all</button>
-        <button data-mact="reject-all" data-gidx="${gi}" class="mini" aria-pressed="${g.members.length > 0 && g.members.every(i => items[i].status === "rejected")}">Reject all</button>
+        <button data-mact="approve-all" data-gidx="${gi}" class="mini" aria-pressed="${[...g.members.map(i => items[i]), ...g.manualMembers.map(j => manualAdds[j])].every(f => f.status === "approved" || f.status === "edited")}">Approve all</button>
+        <button data-mact="reject-all" data-gidx="${gi}" class="mini" aria-pressed="${[...g.members.map(i => items[i]), ...g.manualMembers.map(j => manualAdds[j])].every(f => f.status === "rejected")}">Reject all</button>
       </td>`;
     mappingBody.appendChild(tr);
     if (expanded) {
@@ -228,7 +262,7 @@ function renderResults(result) {
             <button data-act="reject" data-idx="${i}" class="mini" aria-pressed="${f.status === "rejected"}">Reject</button>
           </td>
         </tr>`;
-      }).join("") + g.manualMembers.map(() => `<tr><td colspan="7"><span class="meta">manual entry — uses the group replacement on finalize</span></td></tr>`).join("");
+      }).join("") + g.manualMembers.map(j => `<tr><td colspan="7"><span class="meta">Manual mapping · ${manualAdds[j].count} exact occurrence(s) · ${escapeHtml(manualAdds[j].status)} · uses the replacement above</span></td></tr>`).join("");
       dtr.innerHTML = `<td></td><td colspan="6"><table class="findings members">
         <thead><tr><th>#</th><th>Source</th><th>Conf</th><th>Resolves?</th><th>Replacement</th><th>Decision</th><th>Actions</th></tr></thead>
         <tbody>${membersHtml || '<tr><td colspan="7"><span class="meta">no members</span></td></tr>'}</tbody>
@@ -239,23 +273,23 @@ function renderResults(result) {
   const dropped = result.dropped || [];
   const csvSkipped = dropped.filter(f => (f.reason || "").includes("CSV"));
   const llmUnverified = result.llm_unverified || [];
-  const unverified = llmUnverified.concat(csvSkipped);
-  unverifiedHeading.textContent = csvSkipped.length
-    ? "Findings requiring manual review"
-    : "Pass 2 — not resolvable to exact text";
-  unverifiedHeading.hidden = !unverified.length;
-  unverifiedTable.hidden = !unverified.length;
+  const count = llmUnverified.length + csvSkipped.length;
+  document.getElementById("manual-summary").textContent = count
+    ? `${csvSkipped.length ? "Analysis" : "Pass 2"} — ${count} suggestion(s) could not be mapped automatically${count !== suggestions.length ? ` (${suggestions.length} unique)` : ""}. Verify and add mappings as needed, or dismiss. ${unresolved} still need a decision.`
+    : "No suggestions require manual verification. You can add a mapping for anything the scans missed.";
+  unverifiedTable.hidden = !suggestions.length;
   unverifiedBody.innerHTML = "";
-  unverified.forEach((u) => {
+  suggestions.forEach((u, index) => {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${escapeHtml(u.quote)}</td><td class="cat">${escapeHtml(u.category)}</td><td>${escapeHtml(u.reason || u.mapping_reason || "")}</td>`;
+    const mapping = manualAdds.find(a => a.suggestionIds.includes(index) && a.status !== "rejected");
+    const gi = mapping ? groups.findIndex(g => g.manualMembers.some(j => manualAdds[j] === mapping)) : -1;
+    tr.innerHTML = `<td>${escapeHtml(u.quote)}</td><td class="cat">${escapeHtml(u.category)}</td><td>${escapeHtml(u.reason)}</td><td>${u.status === "mapped" ? `<a href="#mapping-${gi}">Mapping added</a>` : u.status === "dismissed" ? "Dismissed" : "Needs a decision"}</td><td class="row-actions">${u.status === "pending" ? `<button class="mini" data-suggestion="${index}" data-sact="add">Add Mapping</button><button class="mini secondary" data-suggestion="${index}" data-sact="dismiss">Dismiss</button>` : `<button class="mini secondary" data-suggestion="${index}" data-sact="reopen">Reopen</button>`}</td>`;
     unverifiedBody.appendChild(tr);
   });
   const warnings = [];
   if (result.llm_errors && result.llm_errors.length) warnings.push(`Pass 2 (LLM) errors: ${result.llm_errors.join("; ")}`);
-  if (llmUnverified.length) warnings.push(`Pass 2: ${llmUnverified.length} finding(s) not mapped — add manually if verified.`);
-  if (csvSkipped.length) warnings.push(`${csvSkipped.length} finding(s) crossed CSV field boundaries or escaped quotes and were skipped. Add the exact text manually if needed.`);
-  if (dropped.length > csvSkipped.length) warnings.push(`${dropped.length - csvSkipped.length} overlapping finding(s) dropped.`);
+  document.getElementById("analysis-details").hidden = dropped.length <= csvSkipped.length;
+  document.getElementById("analysis-details-text").textContent = `${dropped.length - csvSkipped.length} overlapping detections skipped to avoid conflicting replacements.`;
   warningsEl.textContent = warnings.join(" ");
 }
 
@@ -265,9 +299,9 @@ function applyItemAction(idx, act) {
   if (act === "reject" && item.status !== "rejected") {
     item.status = "rejected";
   } else if (item.status === "rejected") {
-    item.status = "approved";
+    item.status = item.replacementValue !== item.replacement ? "edited" : "approved";
   } else {
-    item.status = "approved";
+    item.status = item.replacementValue !== item.replacement ? "edited" : "approved";
   }
 }
 
@@ -275,16 +309,23 @@ function bindActions() {
   mappingBody.addEventListener("click", (event) => {
     const bulk = event.target.closest("button[data-mact]");
     if (bulk) {
-      const groups = buildGroups();
-      const g = groups[Number(bulk.dataset.gidx)];
+      const g = bulk.closest("tr").mappingGroup;
       if (!g) return;
       if (bulk.dataset.mact === "toggle") {
         if (expandedGroups.has(g.key)) expandedGroups.delete(g.key);
         else expandedGroups.add(g.key);
       } else if (bulk.dataset.mact === "approve-all") {
-        g.members.forEach((i) => { items[i].status = "approved"; });
+        g.members.forEach(i => applyItemAction(i, "approve"));
+        g.manualMembers.forEach(j => {
+          manualAdds[j].status = "edited";
+          manualAdds[j].suggestionIds.forEach(id => { suggestions[id].status = "mapped"; });
+        });
       } else if (bulk.dataset.mact === "reject-all") {
         g.members.forEach((i) => { items[i].status = "rejected"; });
+        g.manualMembers.forEach(j => {
+          manualAdds[j].status = "rejected";
+          manualAdds[j].suggestionIds.forEach(id => { suggestions[id].status = "pending"; });
+        });
       }
       refreshTable();
       return;
@@ -294,14 +335,28 @@ function bindActions() {
     applyItemAction(Number(button.dataset.idx), button.dataset.act);
     refreshTable();
   });
-  mappingBody.addEventListener("change", (event) => {
+  mappingBody.addEventListener("input", (event) => {
+    if (event.target.classList.contains("group-repl")) {
+      const indices = value => value ? value.split(",").map(Number) : [];
+      indices(event.target.dataset.members).forEach(i => {
+        items[i].replacementValue = event.target.value;
+        if (items[i].status !== "rejected") items[i].status = "edited";
+      });
+      indices(event.target.dataset.manualMembers).forEach(j => { manualAdds[j].replacementValue = event.target.value; });
+      const row = event.target.closest("tr");
+      row.mappingGroup.key = JSON.stringify([row.mappingGroup.category, row.mappingGroup.quote, event.target.value]);
+      row.children[5].textContent = groupStatus(row.mappingGroup);
+      updateReviewProgress();
+      return;
+    }
     if (event.target.classList.contains("repl")) {
       const idx = Number(event.target.dataset.idx);
       if (event.target.value !== items[idx].replacementValue) {
         items[idx].replacementValue = event.target.value;
         items[idx].status = "edited";
+        event.target.closest("tr").children[5].textContent = "edited";
       }
-      refreshTable();
+      updateReviewProgress();
     }
   });
 }
@@ -331,7 +386,7 @@ function collectDecisions() {
         end: null,
         quote: a.quote,
         category: a.category,
-        replacement: a.status === "edited" ? a.replacementValue : null,
+        replacement: a.replacementValue,
         status: a.status === "edited" ? "edited" : "approved",
         source: "manual",
       });
@@ -340,8 +395,8 @@ function collectDecisions() {
 }
 
 async function finalize() {
-  if (items.some(f => f.status === "pending") || manualAdds.some(f => f.status === "pending")) {
-    warningsEl.textContent = "Approve or reject all pending findings before finalizing. You can use Approve remaining or Reject remaining.";
+  refreshTable();
+  if (finalizeBtn.disabled) {
     return;
   }
   finalizeBtn.disabled = true;
@@ -375,36 +430,88 @@ async function finalize() {
   } catch (err) {
     warningsEl.textContent = `Finalize failed: ${err.message}`;
   } finally {
-    finalizeBtn.disabled = false;
+    refreshTable();
     backInputBtn.disabled = false;
     finalizeBtn.textContent = "Finalize";
   }
 }
 
-async function addManual() {
-  const quote = manualQuoteEl.value.trim();
+function closeManualForm() {
+  clearTimeout(previewTimer);
+  previewVersion++;
+  previewData = null;
+  activeSuggestion = null;
+  manualForm.hidden = true;
+}
+
+function openManualForm(index = null) {
+  closeManualForm();
+  activeSuggestion = index;
+  manualForm.hidden = false;
+  manualQuoteEl.value = index === null ? "" : suggestions[index].quote || "";
+  manualCategoryEl.value = index === null ? "free_text" : suggestions[index].category;
+  if (!manualCategoryEl.value) manualCategoryEl.value = "free_text";
+  manualReplacementEl.value = "";
+  replacementCustomized = false;
+  manualError.textContent = "";
+  updateManualPreview();
+  refreshTable();
+  manualForm.scrollIntoView({ behavior: "smooth", block: "center" });
+  manualQuoteEl.focus({ preventScroll: true });
+}
+
+async function updateManualPreview() {
+  const version = ++previewVersion;
+  previewData = null;
+  manualAddBtn.disabled = true;
+  manualError.textContent = "";
+  const quote = manualQuoteEl.value;
+  const category = manualCategoryEl.value;
+  const matches = document.getElementById("manual-matches");
+  document.getElementById("manual-contexts").hidden = true;
+  matches.textContent = quote ? "Checking exact occurrences…" : "Enter the exact text to preview its replacement and occurrences.";
   if (!quote) return;
-  const res = await fetch("/api/analyze", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(lastSource),
-  });
-  const plainPayload = await res.json().catch(() => null);
-  const plainText = plainPayload && plainPayload.plain_text ? plainPayload.plain_text : "";
-  const plainMatches = plainPayload?.csv_values
-    ? plainPayload.csv_values.reduce((count, value) => count + value.split(quote).length - 1, 0)
-    : plainText.split(quote).length - 1;
-  if (plainMatches === 0) {
-    warningsEl.textContent = `Manual quote not found verbatim in the text: ${JSON.stringify(quote)}`;
-    return;
+  try {
+    const res = await fetch("/api/mapping-preview", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...lastSource, quote, category }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (version !== previewVersion) return;
+    previewData = { ...data, quote, category };
+    if (!replacementCustomized) manualReplacementEl.value = data.replacement;
+    matches.textContent = data.count
+      ? `This mapping replaces all ${data.count} exact occurrence(s), including matches inside longer text. ${data.count > 20 ? "Showing the first 20 contexts." : "Inspect the contexts before saving."}`
+      : "No exact occurrences found. Edit the source text to match the input.";
+    document.getElementById("manual-contexts").hidden = !data.count;
+    document.getElementById("manual-context-list").innerHTML = data.contexts.map(c => `<li>${escapeHtml(c)}</li>`).join("");
+    manualAddBtn.disabled = !data.count || !manualReplacementEl.value.trim();
+  } catch (err) {
+    if (version !== previewVersion) return;
+    matches.textContent = "";
+    manualError.textContent = `Could not preview mapping: ${err.message}. Edit the source text or category to retry.`;
   }
-  manualAdds.push({
-    quote,
-    category: manualCategoryEl.value,
-    status: "approved",
-    replacementValue: null, // server computes the deterministic default
-  });
-  manualQuoteEl.value = "";
+}
+
+function addManual(event) {
+  event.preventDefault();
+  if (!previewData?.count || previewData.quote !== manualQuoteEl.value || previewData.category !== manualCategoryEl.value || !manualReplacementEl.value.trim()) return;
+  const quote = manualQuoteEl.value;
+  const category = manualCategoryEl.value;
+  const suggestionIds = suggestions.flatMap((u, i) =>
+    i === activeSuggestion || (u.quote === quote && u.category === category) ? [i] : []);
+  // Updating an existing mapping must not add a second all-occurrences decision.
+  const existing = manualAdds.find(a => a.quote === quote);
+  const mapping = existing || { quote, suggestionIds: [] };
+  mapping.category = category;
+  mapping.status = "edited";
+  mapping.count = previewData.count;
+  mapping.replacementValue = manualReplacementEl.value;
+  mapping.suggestionIds = [...new Set([...mapping.suggestionIds, ...suggestionIds])];
+  mapping.suggestionIds.forEach(i => { suggestions[i].status = "mapped"; });
+  if (!existing) manualAdds.push(mapping);
+  closeManualForm();
   refreshTable();
 }
 
@@ -415,6 +522,8 @@ function resetWorkflow() {
   inputHasFormatting = false;
   items = [];
   manualAdds = [];
+  suggestions = [];
+  closeManualForm();
   expandedGroups = new Set();
   reviewContext = {};
   inputWarnings.textContent = "";
@@ -439,9 +548,39 @@ backInputBtn.addEventListener("click", () => showStep(inputPanel));
 backReviewBtn.addEventListener("click", () => showStep(resultsPanel));
 analyzeBtn.addEventListener("click", analyze);
 finalizeBtn.addEventListener("click", finalize);
-manualAddBtn.addEventListener("click", addManual);
+manualForm.addEventListener("submit", addManual);
+document.getElementById("manual-new-btn").addEventListener("click", () => openManualForm());
+document.getElementById("manual-cancel-btn").addEventListener("click", () => { closeManualForm(); refreshTable(); });
+manualQuoteEl.addEventListener("input", () => {
+  clearTimeout(previewTimer);
+  previewVersion++;
+  previewData = null;
+  manualAddBtn.disabled = true;
+  previewTimer = setTimeout(updateManualPreview, 250);
+});
+manualCategoryEl.addEventListener("change", () => { replacementCustomized = false; updateManualPreview(); });
+manualReplacementEl.addEventListener("input", () => {
+  replacementCustomized = true;
+  manualAddBtn.disabled = !previewData?.count || !manualReplacementEl.value.trim();
+});
+unverifiedBody.addEventListener("click", event => {
+  const button = event.target.closest("button[data-suggestion]");
+  if (!button) return;
+  const index = Number(button.dataset.suggestion);
+  if (button.dataset.sact === "add") return openManualForm(index);
+  if (button.dataset.sact === "dismiss") suggestions[index].status = "dismissed";
+  else {
+    const mapping = manualAdds.find(a => a.suggestionIds.includes(index) && a.status !== "rejected");
+    if (mapping) {
+      mapping.status = "rejected";
+      mapping.suggestionIds.forEach(i => { suggestions[i].status = "pending"; });
+    }
+    suggestions[index].status = "pending";
+  }
+  refreshTable();
+});
 approveRemainingBtn.addEventListener("click", () => {
-  items.forEach((f) => { if (f.status === "pending") f.status = "approved"; });
+  items.forEach((f, i) => { if (f.status === "pending") applyItemAction(i, "approve"); });
   refreshTable();
 });
 rejectRemainingBtn.addEventListener("click", () => {

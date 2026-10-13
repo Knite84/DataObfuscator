@@ -74,8 +74,8 @@ The server must support `GET /v1/models` and `POST /v1/chat/completions`. No par
 5. **Replacements** (`app/namer.py`) — category-specific formatting and pools selected deterministically from a SHA-1 hash of the source string: no state, consistent across sessions while code and pools stay unchanged. Current formats include `(555) xxx-xxxx` phones, `9xx-xx-xxxx` national IDs, Luhn-valid 16-digit card-like values, `XX` account placeholders, and `example.net` / `example.com` domains. These are synthetic values, not a guarantee of universally reserved identifiers. `free_text` is intentionally opaque: `[REDACTED-<hash>]`, editable in review.
 6. **Render** — back-to-front replacement applied to plain text directly, and to HTML through the ingest map; unresolvable edits are reported, never guessed.
 7. **Pass 2** (`app/pass2_llm.py`) — the optional host LLM detects only, never rewrites. It is prompted for JSON `[{quote, category, confidence, reason}]` for `person | org | place | free_text`; the parser tolerates surrounding prose or code fences. Text is sent in 2,400-character chunks with 240-character overlap. Quotes must match verbatim within their chunk. Stored confidence is `min(0.80, max(0, raw)) * 0.8`, so its maximum is 0.64; confidence is informational and does not control approval or overlap priority. Invalid or unmappable items surface as `llm_unverified` and are never automatically replaced.
-8. **Review UI** (`app/static/`) — grouped Mapping table only (no separate Findings table): each row is one `(category, quote, replacement)` group with `Approve all` / `Reject all`, expandable (`▸/▾`, all collapsed by default) to per-finding rows with source, confidence, resolvability, editable replacement, and individual Approve/Reject. `Approve remaining` / `Reject remaining` above the grid act on all still-`pending` findings.
-9. **Finalize** — `POST /api/finalize` applies submitted decisions, skips rejected ones, and maps manual quotes to all verbatim occurrences. All findings start pending; the UI requires approval, editing, or rejection of each finding before finalizing. The API rejects pending or unknown decision statuses. Custom replacements for detected spans are honored only while their status is `edited`; clicking Approve after editing resets that status and uses the default replacement. The UI shows plain text first; HTML output sits in a closed accordion.
+8. **Review UI** (`app/static/`) — two sections on the same review page: detected mappings and manual verification. Each mapping group has an editable replacement and group approval/rejection controls; expanding it reveals individual findings. Bulk remaining actions affect detected findings only. Manual suggestions are grouped by quote and category and require Add Mapping or Dismiss. `POST /api/mapping-preview` provides a suggested replacement, occurrence count, and up to 20 contexts without rerunning detection.
+9. **Finalize** — `POST /api/finalize` applies submitted decisions, skips rejected ones, and maps manual quotes to all verbatim occurrences. The UI requires all detected findings and manual suggestions to be reviewed, nonblank active replacements, and no open manual form. The API rejects pending or unknown decision statuses. Approving an edited finding preserves its custom replacement. The UI shows plain text first; HTML output sits in a closed accordion.
 
 > **Execution order.** The list above groups responsibilities. In `app/main.py`, ingestion is followed by Pass 2, then regex + NER inside `merge_findings`, then merging, HTML span resolution, mapping, and draft rendering. The passes run sequentially. Diagram labels refer back to the numbered responsibilities above.
 
@@ -119,10 +119,10 @@ If all 20 occurrences of "John Smith" are detected under the same category, they
 
 ## Review workflow
 
-1. Paste text → **Analyze (Pass 1)**. Despite the button label, this runs regex + spaCy and the optional LLM.
-2. **Mapping table**: bulk `Approve all` / `Reject all` per group, or expand (`▸`) for per-finding edits and decisions. `Approve remaining` / `Reject remaining` settle everything still pending.
-3. Unmappable Pass-2 hits appear under **Pass 2 — not resolvable**; re-add exact spans via Manual add if verified.
-4. Approve, edit, or reject every pending finding before finalizing. Leave edited findings in the `edited` state to retain custom replacements.
+1. Paste text → **Analyze** to run regex + spaCy and the optional LLM.
+2. **Review detected mappings**: edit replacements directly, use `Approve all` / `Reject all` per group, or expand (`▸`) for individual decisions. `Approve remaining` / `Reject remaining` settle pending detected findings only.
+3. **Manual verification**: choose Add Mapping or Dismiss for each unique suggestion. Add Mapping prefills the quote and category; inspect exact occurrences and edit the suggested replacement before Save mapping. Add another mapping handles anything the scans missed. Manual mappings replace all exact occurrences, including substrings inside longer text.
+4. Finalize stays disabled until both sections are reviewed and every active mapping has a replacement. Reopen a suggestion to reconsider it. Rejecting its manual mapping reopens the suggestion; approving it again restores the mapping decision. Overlap statistics appear in Analysis details.
 5. **Finalize** → inspect plain text, HTML, and warnings. Copy TXT, copy HTML source, or download TXT. HTML is available only when the submitted input was HTML; Copy HTML copies markup as a text string, not a rich clipboard payload.
 
 Plain-text pastes (including CSV copied from Notepad) use the text input path, so browser-generated line-break tags do not encode ampersands or angle brackets as HTML entities. Copy TXT copies the final text without adding quotes or otherwise serializing it. CSV field quotes already present in the input remain necessary for commas, embedded quotes, and multiline values.
@@ -167,9 +167,9 @@ The app is unauthenticated and has no application database or document persisten
 - Tags are matched with `<[^>]*>`: a literal `>` inside an attribute value is a known edge case.
 - A span that crosses an inline tag is unresolved for HTML rendering. TXT replacements still apply, while the original HTML span remains unchanged. Expanded review rows show `Resolves? no`; finalize returns warnings. The API's `applied` count includes selected spans that may remain unresolved in HTML.
 - spaCy NER can miss domain-specific person/org mentions; that is exactly what Pass 2 (local LLM) is meant to catch.
-- `free_text` replacements are opaque `[REDACTED-<hash>]` by design (nothing realistic to fake); edit the replacement in the expanded group row if a readable stand-in is needed.
-- Review actions currently clear the displayed LLM errors, unverified table, and overlap warnings. Inspect those before changing decisions; the API still returns them during analysis. Manual add repeats analysis and may call the LLM again.
-- Group Approve/Reject controls act on detected members, not manual entries. Manual entries have no removal control; re-analyze to reset them. There is currently no progress bar or multi-group selection.
+- `free_text` replacements default to opaque `[REDACTED-<hash>]` placeholders; edit the replacement directly in the mapping table or manual form for a readable stand-in.
+- The manual preview shows up to 20 contexts; its count includes every matching occurrence. Overlapping final selections can still be skipped; inspect output warnings.
+- There is currently no progress bar or multi-group selection.
 
 ## Tests
 

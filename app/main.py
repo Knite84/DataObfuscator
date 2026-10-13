@@ -17,6 +17,11 @@ class AnalyzeRequest(BaseModel):
     text: str | None = None
 
 
+class MappingPreviewRequest(AnalyzeRequest):
+    quote: str
+    category: str
+
+
 class Decision(BaseModel):
     start: int | None = None          # plain-text offsets; None => manual quote
     end: int | None = None
@@ -90,6 +95,28 @@ def analyze(req: AnalyzeRequest) -> dict:
         "unresolved_render_edits": render_unresolved,
         "llm_unverified": llm_unverified,
         "llm_errors": llm_errors,
+    }
+
+
+@app.post("/api/mapping-preview")
+def mapping_preview(req: MappingPreviewRequest) -> dict:
+    """Preview manual replacements with the same matching rules as finalize."""
+    plain = HtmlTextMap.from_html(req.html).plain_text if req.html else req.text or ""
+    scan = csv_scan(plain) if not req.html else None
+    spans = []
+    if req.quote:
+        if scan is not None:
+            spans = scan.quote_spans(req.quote)
+        else:
+            search_at = 0
+            while (start := plain.find(req.quote, search_at)) >= 0:
+                end = start + len(req.quote)
+                spans.append((start, end))
+                search_at = end
+    return {
+        "replacement": replacement_for(req.category, req.quote),
+        "count": len(spans),
+        "contexts": [plain[max(0, start - 45):min(len(plain), end + 45)] for start, end in spans[:20]],
     }
 
 

@@ -27,8 +27,14 @@
     </section>
     <section class="panel" id="results-panel" aria-labelledby="review-heading" hidden>
       <p class="meta">Step 2 of 3 · Review</p>
-      <h2 id="review-heading" tabindex="-1">Mapping table</h2>
-      <p class="hint">Bulk review: approve or reject a whole group here, or expand a row for per-finding review and edits.</p>
+      <h2 id="review-heading" tabindex="-1">Review mappings</h2>
+      <nav class="review-overview" aria-label="Review sections">
+        <a href="#detected-section">1. Detected mappings <span id="detected-count"></span></a>
+        <a href="#manual-section">2. Manual verification <span id="manual-count"></span></a>
+      </nav>
+      <section id="detected-section" class="review-section" aria-labelledby="detected-heading">
+      <h3 id="detected-heading">1. Review detected mappings</h3>
+      <p class="hint">Approve or reject detected mappings here. Edit a replacement directly, or expand a row to review individual findings. Bulk actions apply to detected findings only.</p>
       <div class="table-actions">
         <button id="approve-remaining-btn" class="secondary">Approve remaining</button>
         <button id="reject-remaining-btn" class="secondary">Reject remaining</button>
@@ -41,27 +47,39 @@
         <tbody id="mapping-body"></tbody>
       </table>
       </div>
-      <p id="warnings" class="warnings"></p>
-      <h2 id="unverified-heading" hidden>Pass 2 — not resolvable to exact text</h2>
+      </section>
+      <p id="warnings" class="warnings" role="alert"></p>
+      <details class="analysis-details" id="analysis-details" hidden><summary>Analysis details</summary><p id="analysis-details-text" class="meta"></p></details>
+      <section id="manual-section" class="review-section manual-review" aria-labelledby="unverified-heading">
+      <h3 id="unverified-heading">2. Review suggestions requiring manual verification</h3>
+      <p id="manual-summary" class="hint" role="status"></p>
+      <div class="table-scroll">
       <table class="findings" id="unverified-table" hidden>
         <thead>
-          <tr><th>Quote</th><th>Category</th><th>Reason</th></tr>
+          <tr><th>Quote</th><th>Category</th><th>Reason</th><th>Decision</th><th>Actions</th></tr>
         </thead>
         <tbody id="unverified-body"></tbody>
       </table>
-      <p class="hint">Manual add (reviewer-verified): if a finding cannot be mapped safely, add the exact text here.</p>
-      <div class="manual-add">
-        <input id="manual-quote" placeholder="exact verbatim quote" />
-        <select id="manual-category">
-          <option>person</option><option>org</option><option>place</option><option>free_text</option>
-        </select>
-        <button id="manual-add-btn" class="secondary">Add</button>
       </div>
+      <button id="manual-new-btn" class="secondary">Add another mapping</button>
+      <form id="manual-form" class="manual-add" hidden>
+        <h4>Verify and save a manual mapping</h4>
+        <div class="manual-fields">
+          <label>Exact source text<input id="manual-quote" placeholder="Exact verbatim quote" required /></label>
+          <label>Category<select id="manual-category"><option>person</option><option>org</option><option>place</option><option>free_text</option><option>email</option><option>phone</option><option>national_id</option><option>financial</option><option>account_id</option><option>url</option></select></label>
+          <label>Replacement<input id="manual-replacement" required /></label>
+        </div>
+        <p id="manual-matches" class="hint" role="status"></p>
+        <details id="manual-contexts" hidden><summary>Inspect matching occurrences</summary><ul id="manual-context-list"></ul></details>
+        <p id="manual-error" class="warnings" role="alert"></p>
+        <div class="actions"><button id="manual-add-btn" type="submit">Save mapping</button><button id="manual-cancel-btn" type="button" class="secondary">Cancel</button></div>
+      </form>
+      </section>
+      <p id="review-progress" class="hint" role="status"></p>
       <div class="actions">
         <button id="back-input-btn" class="secondary">Back to input</button>
         <button id="finalize-btn">Finalize</button>
       </div>
-      <p id="review-progress" class="hint" role="status"></p>
     </section>
 
     <section class="panel" id="final-panel" aria-labelledby="output-heading" hidden>
